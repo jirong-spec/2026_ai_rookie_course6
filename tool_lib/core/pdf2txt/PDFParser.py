@@ -6,7 +6,6 @@ from typing import Callable
 from PyPDF2 import PdfReader, PdfFileReader
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer, LTChar
-import pikepdf
 import pymupdf
 import re
 from tool_lib.core.pdf2txt.Clean_text import clean_bopomofo
@@ -152,9 +151,9 @@ def gettitle(articleContent):
 
 
 def fixPdf(file):
-    with pikepdf.open(file, allow_overwriting_input=True) as pdf:
-        num_pages = len(pdf.pages)
-        pdf.save(file)
+    doc = pymupdf.open(file)
+    num_pages = len(doc)
+    doc.close()
     return num_pages
 
 
