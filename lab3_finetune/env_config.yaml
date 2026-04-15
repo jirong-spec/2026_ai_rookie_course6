@@ -1,0 +1,14 @@
+path_settings:
+  lora:
+    lora_weight: ""
+    lora_optimizer: ""
+    lora_output_dir: ""
+  model_name_or_path: "/mnt/model/Qwen2.5-3B-Instruct"
+  multi_node_env_path: null
+  optimizer_path: ""
+  train_data_path:
+    - ./dataset_config/text-generation/QA_dataset_config.yaml
+  val_data_path: null
+  nvme_path: "/media/nvme0"
+  output_dir: "/workspace/output_model"
+  log_name: "/workspace/ft.log"

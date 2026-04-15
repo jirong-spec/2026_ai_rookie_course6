@@ -1,0 +1,12 @@
+*.pyc
+__pycache__/
+.venv/
+*.egg-info/
+workdir/
+output/
+output_model/
+benchmark_results/
+llamaindex_result/
+*.log
+.DS_Store
+uv.lock

@@ -1,0 +1,9 @@
+rm-static:
+  data_path: "/workspace/train.json"
+  strategy: "QA"
+  system_prompt: "你是一個專業助理，請根據提供的資訊回答問題。"
+  user_prompt: "{question}"
+  question_key: "question"
+  answer_key: "answer"
+  exp_type: "train"
+  label_key: "answer"
