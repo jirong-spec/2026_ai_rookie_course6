@@ -1,93 +1,74 @@
-# Lab3：Finetune（aiDAPTIV2）
+# Lab3：Finetune（TRL SFTTrainer + DeepSpeed ZeRO-3）
 
-| 項目 | 內容 |
+## 概述
+
+| 項目 | 說明 |
 |------|------|
-| 輸入 | Lab2 的 `train.json` |
-| 產出 | `output_model/`（模型權重） |
-| GPU 需求 | aiDAPTIV2 |
+| 框架 | TRL `SFTTrainer` + PEFT `LoraConfig` |
+| 分散訓練 | DeepSpeed ZeRO-3，optimizer offload → NVMe，param offload → CPU |
+| GPU | RTX 3060 12GB × 1 |
 
-## 目的
+使用自建 Docker 容器，對 `Qwen2.5-3B-Instruct` 進行一輪指令微調（SFT）。
 
-使用 **aiDAPTIV2** 在 Docker 容器內，對 `Qwen2.5-3B-Instruct` 進行一輪指令微調（SFT）。
+## 前置條件
 
-## 學習目標
+- Lab2 已完成，`lab2/output/train.json` 存在（80 筆）。
+- Docker 已安裝，base model 已放置於 `~/models/Qwen2.5-3B-Instruct/`。
 
-- 熟悉 Docker Compose 啟動服務、進入容器、在容器內執行訓練指令的完整順序。
-- 能對照三份 yaml 設定檔理解「環境／實驗／資料」分層設定。
+## 訓練格式
 
-## 前置需求
+`lab2/output/train.json` 為 `{"question", "answer"}` 的 JSON 陣列。  
+`train_sft.py` 讀入後自動轉換為 messages 格式：
 
-- Lab2 已完成，有 `train.json`。
-- **vLLM 已關閉**（`docker compose -f docker-compose-vllm.yaml down`），GPU 可供 Finetune 使用。
-- Docker 已安裝，aiDAPTIV2 映像已就緒。
-
----
-
-## 操作步驟
-
-### 步驟 1 — 複製訓練資料
-
-將 Lab2 產出的 `train.json` 複製到本目錄：
-
-```bash
-cp ../lab2/output/train.json ./train.json
+```json
+{
+  "messages": [
+    {"role": "system",    "content": "你是一個專業助理，請根據提供的資訊回答問題。"},
+    {"role": "user",      "content": "<question>"},
+    {"role": "assistant", "content": "<answer>"}
+  ]
+}
 ```
 
-### 步驟 2 — 確認設定檔
+## 訓練設定
 
-本目錄下有三份 yaml，請檢查：
+| 參數 | 值 |
+|------|----|
+| LoRA rank | 16 |
+| LoRA alpha | 32 |
+| Target modules | q/k/v/o/gate/up/down_proj |
+| Learning rate | 5e-5 |
+| Batch size | 1 × grad_accum=32 |
+| Max seq length | 4096 |
+| Epochs | 3 |
 
-| 檔案 | 管什麼 | 關鍵設定 |
-|------|--------|---------|
-| `env_config.yaml` | 模型路徑、輸出路徑 | `model_name_or_path: "/mnt/model/Qwen2.5-3B-Instruct"` |
-| `exp_config.yaml` | 訓練超參數 | `num_train_epochs: 3`、`learning_rate: 0.00005`、`per_device_train_batch_size: 1` |
-| `QA_dataset_config.yaml` | 資料路徑與欄位 | `data_path: "/workspace/train.json"`、`question_key: "question"`、`answer_key: "answer"` |
+## 執行方式
 
-> 通常不需修改，但如果你在 Lab2 改了欄位名稱，請同步修改 `QA_dataset_config.yaml`。
-
-### 步驟 3 — 啟動容器
-
-```bash
-cd lab3_finetune
-docker compose up -d
-docker compose ps    # 確認 aidaptiv_fine_tune 為 running
-```
-
-### 步驟 4 — 進入容器並執行訓練
+### 1. 建立 SFT 容器
 
 ```bash
-docker compose exec aidaptiv_fine_tune bash
+docker compose -f lab3_finetune/docker-compose-sft.yaml build
+docker compose -f lab3_finetune/docker-compose-sft.yaml up -d
 ```
 
-在容器內：
+### 2. 執行訓練
 
 ```bash
-cp /workspace/env_config.yaml /home/root/aiDAPTIV2/commands/env_config/
-cp /workspace/exp_config.yaml /home/root/aiDAPTIV2/commands/exp_config/
-cp /workspace/QA_dataset_config.yaml /home/root/aiDAPTIV2/commands/dataset_config/text-generation/
-
-cd /home/root/aiDAPTIV2/commands/
-phisonai2 --env_config ./env_config/env_config.yaml --exp_config ./exp_config/exp_config.yaml
+docker compose -f lab3_finetune/docker-compose-sft.yaml exec sft_finetune \
+  deepspeed --num_gpus=1 /workspace/lab3_finetune/train_sft.py
 ```
 
-### 步驟 5 — 確認產物
+### 3. 合併 LoRA adapter
 
-訓練完成後，確認 `/workspace/output_model`（即本目錄的 `output_model/`）有模型權重檔。
+```bash
+docker compose -f lab3_finetune/docker-compose-sft.yaml exec sft_finetune \
+  python3 /workspace/lab3_finetune/merge_lora.py
+```
 
----
+合併後的完整模型會存放於 `~/models/Qwen2.5-3B-Instruct-finetuned/`。
 
-## 常見問題
+### 4. 部署至 vLLM
 
-| 現象 | 可能原因與處理 |
-|------|----------------|
-| `Cannot connect to the Docker daemon` | Docker 未啟動；請開啟 Docker Desktop。 |
-| `service ... is not running` | 未執行 `docker compose up -d`；查看 `docker compose logs`。 |
-| `phisonai2` 找不到資料 | 檢查 `QA_dataset_config.yaml` 內路徑是否在容器內存在（應為 `/workspace/train.json`）。 |
-
-## 繳交物
-
-- `output_model/` 目錄（含模型權重，Finetune 產出）
-
-## 完成定義
-
-- Finetune 跑完，`output_model/` 有模型權重。
+```bash
+docker compose -f docker-compose-vllm.yaml up -d --force-recreate
+```

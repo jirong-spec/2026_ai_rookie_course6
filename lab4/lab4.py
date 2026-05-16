@@ -5,6 +5,7 @@ Lab4 - Finetuned 推理 + 比較報告
 """
 
 import os
+import sys
 import json
 import random
 import time
@@ -15,6 +16,8 @@ from tqdm import tqdm
 from openai import AsyncOpenAI
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(SCRIPT_DIR, '..')))
+from openai_multi_client import OpenAIMultiClient
 
 # ==============================================================================
 #                          設定區
@@ -60,8 +63,6 @@ Answer this question using the information given in the context above. Here is t
 # ==============================================================================
 
 def run_finetuned_inference(guru_data, output_path):
-    from openai_multi_client import OpenAIMultiClient
-
     async_client = AsyncOpenAI(api_key="empty", base_url=BASE_URL, timeout=1200)
     api = OpenAIMultiClient(
         async_client, concurrency=20,
@@ -79,7 +80,7 @@ def run_finetuned_inference(guru_data, output_path):
                 api.request(data={
                     "messages": [
                         {"role": "system", "content": RAG_SYSTEM_PROMPT},
-                        {"role": "user", "content": RAG_USER_PROMPT.format(data["question"], str(data[KEY]))}
+                        {"role": "user", "content": RAG_USER_PROMPT.format(data["question"], str(data[KEY])[:5000])}
                     ],
                     "n": 1, "top_p": 1, "temperature": 0
                 }, metadata={'data': data})
@@ -213,25 +214,10 @@ if __name__ == "__main__":
         baseline_data = json.load(f)
     side_by_side_comparison(baseline_data, ft_data, n=10)
 
-    # Part 3: Benchmark
-    print("\n準備 Benchmark（打外部 GPT API）...")
-    headers = {'Content-Type': 'application/json'}
-    login_data = {"username": GPT_USERNAME, "password": GPT_PASSWORD}
-    resp = requests.post(GPT_API_URL, headers=headers, data=json.dumps(login_data))
-    OPENAI_KEY = resp.json()['token']
-
-    from llama_index.llms.openai import OpenAI as LI_OpenAI
-    llm = LI_OpenAI(
-        JUDGE_MODEL_NAME, api_key=OPENAI_KEY, api_base=GPT_API_BASE,
-        temperature=0, n=1, top_p=0.00001
-    )
-    print("\n[Benchmark] Base Model...")
-    asyncio.run(run_benchmark(baseline_data, BENCHMARK_DIR, JUDGE_MODEL_NAME, llm, label="Base Model"))
-
-    print("\n[Benchmark] Finetuned Model...")
-    asyncio.run(run_benchmark(ft_data, BENCHMARK_DIR, JUDGE_MODEL_NAME, llm, label="Finetuned Model"))
+    # Part 3: Benchmark — 需要 GPT API 憑證，跳過
+    print("\n[Benchmark] 跳過（無 GPT API 憑證）")
 
     print("\n" + "=" * 60)
-    print("Lab4 完成！")
+    print("Lab4 完成！（推理 + 人工觀察）")
     print("請撰寫 comparison_report.md，包含 base vs finetuned 的比較表與結論。")
     print("=" * 60)

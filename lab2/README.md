@@ -11,12 +11,12 @@
 趁 vLLM **還開著**（之後要關掉做 Finetune），一次完成兩件事：
 
 1. 用**未微調的 base model**（`Qwen2.5-3B-Instruct`）對資料跑批量推理，存檔備用。
-2. 將 Lab1 的 Guru 產物轉為 **aiDAPTIV2 訓練格式**（`{question, answer}`），切出 train / test。
+2. 將 Lab1 的 Guru 產物轉為 **SFT 訓練格式**（`{question, answer}`），切出 train / test。
 
 ## 學習目標
 
 - 理解推理時的 Prompt 模板（System Prompt + User Prompt + RAG context）。
-- 理解 Guru 產物欄位（`question`、`base_answer`、`RAG_chunks`、`hybrid_chunks`、`chunk`）與 aiDAPTIV2 所需格式（`question`、`answer`）的差異。
+- 理解 Guru 產物欄位（`question`、`base_answer`、`RAG_chunks`、`hybrid_chunks`、`chunk`）與 SFTTrainer 所需格式（`question`、`answer`）的差異。
 - 練習資料格式轉換與 train/test 切分。
 - 觀察 base model（未微調）的推理品質，為 Lab4 比較做準備。
 
@@ -46,12 +46,12 @@ uv run python lab2.py
 
 程式會依序：
 1. 對 Guru 產物用 base model 跑推理 → `baseline_inference.json`
-2. 將 Guru 產物轉為 aiDAPTIV2 格式
+2. 將 Guru 產物轉為 SFT 格式
 3. 隨機切分 80% train + 20% test
 
 ### 步驟 3 — 決定資料轉換策略（TODO）
 
-`lab2.py` 的 `convert_for_aidaptiv` 函式有兩個需要你決定的 TODO：
+`lab2.py` 的 `convert_to_sft_format` 函式有兩個需要你決定的 TODO：
 
 **TODO A — answer 取法**（建議先用預設：取 `base_answer` 全文）
 
@@ -81,7 +81,7 @@ uv run python lab2.py
 | 檔案 | 說明 | 後續誰用 |
 |------|------|---------|
 | `baseline_inference.json` | Base model 推理結果 | Lab3（benchmark）、Lab4（比較） |
-| `train.json` | aiDAPTIV2 訓練資料 | Lab3（Finetune） |
+| `train.json` | SFT 訓練資料 | Lab3（Finetune） |
 | `test.json` | 測試集 | Lab4（Finetuned 推理） |
 
 ## 繳交物
@@ -91,5 +91,5 @@ uv run python lab2.py
 ## 完成定義
 
 - `baseline_inference.json` 已產出，每筆有 `predicted_answer` 欄位。
-- `train.json` / `test.json` 格式為 `{question, answer}`，可被 aiDAPTIV2 讀取。
+- `train.json` / `test.json` 格式為 `{question, answer}`，可被 TRL SFTTrainer 讀取。
 - 能說出你的 answer 取法與是否帶 context 的選擇及理由。

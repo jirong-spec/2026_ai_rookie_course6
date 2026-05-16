@@ -6,6 +6,7 @@ Part 2: 比較 RAG_chunks / hybrid_chunks / chunk 對推理分數的影響
 """
 
 import os
+import sys
 import json
 import random
 import time
@@ -16,6 +17,7 @@ from tqdm import tqdm
 from openai import AsyncOpenAI
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(SCRIPT_DIR, '..')))
 
 # ==============================================================================
 #                          設定區
@@ -105,7 +107,7 @@ def run_inference_with_key(guru_data, key, output_path):
                 api.request(data={
                     "messages": [
                         {"role": "system", "content": RAG_SYSTEM},
-                        {"role": "user", "content": RAG_USER.format(data["question"], context)}
+                        {"role": "user", "content": RAG_USER.format(data["question"], context[:5000])}
                     ],
                     "n": 1, "top_p": 1, "temperature": 0
                 }, metadata={'data': data})
@@ -161,10 +163,10 @@ if __name__ == "__main__":
     print("Extra Lab A：錯誤分析 + Context 欄位消融")
     print("=" * 60)
 
-    # Part 1
-    analyze_errors(LAB4_BENCHMARK_JSON)
+    # Part 1: 跳過（無 GPT benchmark 結果）
+    print("\n[Part 1] 跳過：無 Lab4 benchmark 評分結果（需 GPT API）")
 
-    # Part 2
+    # Part 2: Context 欄位消融推理
     with open(GURU_OUTPUT, 'r', encoding='utf-8') as f:
         guru_data = json.load(f)
 
@@ -174,29 +176,28 @@ if __name__ == "__main__":
         data = run_inference_with_key(guru_data, key, path)
         results[key] = data
 
-    # Benchmark
-    print("\n準備 Benchmark...")
-    headers = {'Content-Type': 'application/json'}
-    resp = requests.post(GPT_API_URL, headers=headers, data=json.dumps({"username": GPT_USERNAME, "password": GPT_PASSWORD}))
-    OPENAI_KEY = resp.json()['token']
+    # 並排顯示 5 筆
+    import random as _r
+    _r.seed(42)
+    rag_data = json.load(open(os.path.join(SCRIPT_DIR, '..', 'lab4', 'output', 'finetuned_inference.json'), encoding='utf-8'))
+    rag_dict = {d['question']: d.get('predicted_answer', '') for d in rag_data}
+    hyb_dict = {d['question']: d.get('predicted_answer', '') for d in results.get('hybrid_chunks', [])}
+    chk_dict = {d['question']: d.get('predicted_answer', '') for d in results.get('chunk', [])}
+    qs = _r.sample([d['question'] for d in guru_data], min(5, len(guru_data)))
 
-    from llama_index.llms.openai import OpenAI as LI_OpenAI
-    llm = LI_OpenAI(JUDGE_MODEL_NAME, api_key=OPENAI_KEY, api_base=GPT_API_BASE, temperature=0, n=1, top_p=0.00001)
+    print(f"\n{'='*70}")
+    print("並排比較：RAG_chunks vs hybrid_chunks vs chunk（5 筆）")
+    print('='*70)
+    for i, q in enumerate(qs, 1):
+        print(f"\n--- 第 {i} 筆 ---")
+        print(f"[問題] {q}")
+        print(f"[RAG_chunks]    {str(rag_dict.get(q,''))[:200]}")
+        print(f"[hybrid_chunks] {str(hyb_dict.get(q,''))[:200]}")
+        print(f"[chunk]         {str(chk_dict.get(q,''))[:200]}")
 
-    async def all_benchmarks():
-        scores = {}
-        for key, data in results.items():
-            label, avg = await benchmark_one(data, key, BENCHMARK_DIR, llm)
-            scores[label] = avg
-        return scores
-
-    scores = asyncio.run(all_benchmarks())
-
+    print(f"\n[Benchmark] 跳過（無 GPT API 憑證）")
     print(f"\n{'='*60}")
-    print("Context 欄位消融結果")
-    print('='*60)
-    print(f"  RAG_chunks (Lab4)   : （見 Lab4 報告）")
-    for k, v in scores.items():
-        print(f"  {k:20s}: {v:.2f}/5")
-    print("\n請撰寫 error_analysis.md。")
+    print("Extra A 完成！（Context 欄位消融推理）")
+    print(f"  hybrid_chunks inference → {OUTPUT_DIR}/inference_hybrid_chunks.json")
+    print(f"  chunk inference         → {OUTPUT_DIR}/inference_chunk.json")
     print("=" * 60)

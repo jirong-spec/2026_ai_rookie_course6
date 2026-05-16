@@ -74,7 +74,7 @@ def return_response(messages, temperature=0.8, top_p=0.3):
     try:
         response = client.chat.completions.create(
             model=MODELNAME, messages=messages,
-            temperature=temperature, top_p=top_p, max_tokens=8*1024
+            temperature=temperature, top_p=top_p, max_tokens=2048
         )
         return cc.convert(response.choices[0].message.content)
     except Exception as e:

@@ -6,6 +6,7 @@ Lab5 - Prompt 與 Context 消融實驗
 """
 
 import os
+import sys
 import json
 import random
 import time
@@ -16,6 +17,8 @@ from tqdm import tqdm
 from openai import AsyncOpenAI
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(SCRIPT_DIR, '..')))
+from openai_multi_client import OpenAIMultiClient
 
 # ==============================================================================
 #                          設定區
@@ -69,8 +72,6 @@ NO_CTX_USER = "Please answer the following question. Respond in the same languag
 # ==============================================================================
 
 def run_inference(guru_data, output_path, system_prompt, user_prompt_template, use_context=True):
-    from openai_multi_client import OpenAIMultiClient
-
     async_client = AsyncOpenAI(api_key="empty", base_url=BASE_URL, timeout=1200)
     api = OpenAIMultiClient(
         async_client, concurrency=20,
@@ -83,7 +84,7 @@ def run_inference(guru_data, output_path, system_prompt, user_prompt_template, u
             try:
                 q = data["question"]
                 if use_context:
-                    user_msg = user_prompt_template.format(str(data[KEY]), q)
+                    user_msg = user_prompt_template.format(str(data[KEY])[:5000], q)
                 else:
                     user_msg = user_prompt_template.format(q)
 
@@ -191,27 +192,13 @@ if __name__ == "__main__":
     no_ctx_data = run_inference(guru_data, no_ctx_path, NO_CTX_SYSTEM, NO_CTX_USER, use_context=False)
     compare_with_lab4(lab4_data, no_ctx_data, "無Context", n=5)
 
-    # Benchmark
-    print("\n準備 Benchmark...")
-    headers = {'Content-Type': 'application/json'}
-    resp = requests.post(GPT_API_URL, headers=headers, data=json.dumps({"username": GPT_USERNAME, "password": GPT_PASSWORD}))
-    OPENAI_KEY = resp.json()['token']
-
-    from llama_index.llms.openai import OpenAI as LI_OpenAI
-    llm = LI_OpenAI(JUDGE_MODEL_NAME, api_key=OPENAI_KEY, api_base=GPT_API_BASE, temperature=0, n=1, top_p=0.00001)
-
-    async def all_benchmarks():
-        s1 = await run_benchmark(simple_data, BENCHMARK_DIR, "simple_prompt", llm)
-        s2 = await run_benchmark(no_ctx_data, BENCHMARK_DIR, "no_context", llm)
-        return s1, s2
-
-    s1, s2 = asyncio.run(all_benchmarks())
+    # Benchmark — 需要 GPT API 憑證，跳過
+    print("\n[Benchmark] 跳過（無 GPT API 憑證）")
 
     print(f"\n{'='*60}")
-    print("Lab5 消融實驗分數總結")
+    print("Lab5 消融實驗完成！（推理 + 人工觀察）")
     print('='*60)
-    print(f"  Lab4 完整 prompt + RAG context : （見 Lab4 報告）")
-    print(f"  B 組 極簡 prompt + RAG context : {s1:.2f}/5")
-    print(f"  D 組 完整 prompt + 無 context  : {s2:.2f}/5")
+    print(f"  B 組 simple_prompt_inference.json 已儲存")
+    print(f"  D 組 no_context_inference.json 已儲存")
     print(f"\n請撰寫 ablation_report.md，分析差異原因。")
     print("=" * 60)

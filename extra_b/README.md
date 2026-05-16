@@ -4,7 +4,7 @@
 |------|------|
 | 輸入 | Lab1 的 `docs_txt/`（已轉好的文字檔）、Lab4 基線分數 |
 | 產出 | 新 Guru 產物、`train_v2.json`、`test_v2.json`、新 finetuned model、`extra_b_finetuned_inference.json`、`ab_comparison_report.md` |
-| GPU 需求 | vLLM（重跑 Guru）+ Finetune（第二次 aiDAPTIV2）+ vLLM（推理） |
+| GPU 需求 | vLLM + SFT Container |
 | 性質 | 選做；不列入成績，給進度較快、想延伸研究與挑戰的同學 |
 
 ## 目的
@@ -50,7 +50,7 @@ cp output/train_v2.json ../lab3_finetune/train.json
 
 cd ../lab3_finetune
 docker compose up -d
-docker compose exec aidaptiv_fine_tune bash
+docker compose -f lab3_finetune/docker-compose-sft.yaml exec sft_finetune bash
 # 在容器內執行訓練指令（同 Lab3）
 ```
 

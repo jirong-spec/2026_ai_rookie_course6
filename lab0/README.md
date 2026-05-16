@@ -11,7 +11,7 @@
 確認本課程所需的三個關鍵環境元件可正常運作：
 
 1. **vLLM**（`Qwen2.5-3B-Instruct`）— 前面課程已教過如何啟動，此處驗證連線。
-2. **Docker + aiDAPTIV2 映像** — Lab3 微調需要。
+2. **Docker** — 。
 3. **Embedding Model**（`intfloat/multilingual-e5-large`）— Lab1 RAG 檢索需要。
 
 ## 學習目標
@@ -58,12 +58,12 @@ uv run python lab0.py
 | Docker | 執行 `docker --version` | 印出 Docker 版本 |
 | Embedding | 載入 `intfloat/multilingual-e5-large` 並對測試文字做 embedding | 印出向量維度（1024） |
 
-### 步驟 4 — 確認 aiDAPTIV2 映像
+### 步驟 4 — 確認 Docker 環境
 
-（選做）確認 aiDAPTIV2 Docker 映像是否已存在：
+確認 Docker 是否正常運作：
 
 ```bash
-docker images | grep aidaptiv
+docker info | grep "Server Version"
 ```
 
 ## 完成定義

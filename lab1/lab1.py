@@ -16,7 +16,6 @@ from tqdm import tqdm
 from openai import OpenAI, OpenAIError
 import concurrent.futures
 import logging
-import copy
 
 from tool_lib.core.pdf2txt.PDFParser import PDFParser
 from tool_lib.core.pdf2txt.createChunk import create_chunk_from_txt
@@ -44,6 +43,15 @@ OUTPUT_FOLDER = os.path.join(SCRIPT_DIR, "output")         # lab1/output/
 MAX_QUESTION = 100                      # 生成問題數量上限
 CHUNK_SIZE = 256                        # 分塊大小
 
+_client: "OpenAI | None" = None
+
+
+def _get_client() -> "OpenAI":
+    global _client
+    if _client is None:
+        _client = OpenAI(api_key='EMPTY', base_url=ENDPOINT)
+    return _client
+
 
 # ==============================================================================
 #                          工具函式（來自 guru.py）
@@ -66,7 +74,7 @@ def GetFoldersWithFiles(root_dir, file_types):
 
 
 def extract_title(filePath, txt):
-    fileName = filePath.split("/")[-1]
+    fileName = os.path.basename(filePath)
     if " " in fileName:
         return "".join(fileName.split(" ")[1:])
     if "_" in fileName:
@@ -75,11 +83,11 @@ def extract_title(filePath, txt):
 
 
 def return_response(messages, temperature=0.8, top_p=0.3):
-    client = OpenAI(api_key='EMPTY', base_url=ENDPOINT)
+    client = _get_client()
     try:
         response = client.chat.completions.create(
             model=MODELNAME, messages=messages,
-            temperature=temperature, top_p=top_p, max_tokens=8*1024
+            temperature=temperature, top_p=top_p, max_tokens=2048
         )
         output = response.choices[0].message.content
         return cc.convert(output)
@@ -192,7 +200,13 @@ def stage_question(chunk_json_file, question_output_path, max_question):
             {"role": "user", "content": str(chunks) + '\njust give me the question'},
         ]
         response = return_response(messages, temperature=1.2, top_p=0.7)
-        return {"filename": paper['filename'], "title": paper['title'], "chunk": paper['chunk'], 'question': response}
+        return {
+            "filename": paper["filename"],
+            "title": paper["title"],
+            "chunk": paper["chunk"],
+            "question": response,
+            "question_ok": response is not None and str(response).strip() != ""
+        }
 
     paperData = DataPool(inputFile=chunk_json_file).get_data()
     chunk_windows = 5
@@ -206,6 +220,10 @@ def stage_question(chunk_json_file, question_output_path, max_question):
                     'chunk': paper.get_chunk(start_index=startChunk, window_size=chunk_window_local, shuffle=True)
                 }
                 gen_data_list.append(data)
+                if len(gen_data_list) >= max_question:
+                    break
+            if len(gen_data_list) >= max_question:
+                break
     random.shuffle(gen_data_list)
     gen_data_list = gen_data_list[:max_question]
 
@@ -221,7 +239,7 @@ def stage_question(chunk_json_file, question_output_path, max_question):
                     json_list.append(result)
             except Exception as exc:
                 print(f"問題生成例外: {exc}")
-            if len(json_list) % 10 == 0:
+            if len(json_list) > 0 and len(json_list) % 10 == 0:
                 SaveDataInJson(json_list, question_output_path)
 
     SaveDataInJson(json_list, question_output_path)
@@ -270,7 +288,7 @@ def stage_answer(question_output_path, answer_output_path):
                     json_list.append(result)
             except Exception as exc:
                 print(f"答案生成例外: {exc}")
-            if len(json_list) % 10 == 0:
+            if len(json_list) > 0 and len(json_list) % 10 == 0:
                 SaveDataInJson(json_list, answer_output_path)
 
     SaveDataInJson(json_list, answer_output_path)
@@ -297,7 +315,20 @@ def stage_rag(output_folder, answer_output_path, rag_output_path, retrieve_top_k
             if data is None:
                 continue
             question = data["question"]
-            chunk_score_list = rag.vectorstore.similarity_search_with_score(question, k=retrieve_top_k)
+            if question is None or not str(question).strip():
+                data["hybrid_chunks"] = []
+                data["RAG_chunks"] = []
+                data["rag_acc"] = 0
+                data["rag_error"] = "empty question"
+                new_list.append(data)
+                continue
+
+            question = str(question).strip()
+
+            chunk_score_list = rag.vectorstore.similarity_search_with_score(
+                question, k=retrieve_top_k
+            )
+
             chunk_list = []
             for chunk in chunk_score_list:
                 context = chunk[0].page_content
@@ -305,10 +336,11 @@ def stage_rag(output_folder, answer_output_path, rag_output_path, retrieve_top_k
                 chunk_list.append("file name:" + file_name + "\ncontent: " + context)
 
             golden_chunk = data["chunk"]
-            rag_chunk = copy.deepcopy(chunk_list)
+            rag_chunk = list(chunk_list)
+            rag_chunk_set = set(rag_chunk)
             rag_acc = 0
             for gc in golden_chunk:
-                if gc in rag_chunk:
+                if gc in rag_chunk_set:
                     rag_acc += 1
                 else:
                     rag_chunk.insert(0, gc)

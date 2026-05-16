@@ -2,14 +2,18 @@
 Lab2 - Base 模型推理 + 資料轉換
 ================================
 1. 用 base model 對 Guru 產物做批量推理。
-2. 將 Guru 產物轉為 aiDAPTIV2 訓練格式並切分 train/test。
+2. 將 Guru 產物轉為 SFT 訓練格式（{question, answer}）並切分 train/test。
 """
 
 import os
+import sys
 import json
 import random
 from tqdm import tqdm
 from openai import AsyncOpenAI
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from openai_multi_client import OpenAIMultiClient
 
 # 路徑請由此處修改 ---------------------------------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -43,8 +47,6 @@ Answer this question using the information given in the context above. Here is t
 
 def run_base_inference(guru_data, output_path):
     """用 base model 對 guru_data 做批量推理"""
-    from openai_multi_client import OpenAIMultiClient
-
     KEY = "RAG_chunks"
     async_client = AsyncOpenAI(api_key="empty", base_url=BASE_URL, timeout=1200)
     api = OpenAIMultiClient(
@@ -63,7 +65,7 @@ def run_base_inference(guru_data, output_path):
                 api.request(data={
                     "messages": [
                         {"role": "system", "content": RAG_SYSTEM_PROMPT},
-                        {"role": "user", "content": RAG_USER_PROMPT.format(data["question"], str(data[KEY]))}
+                        {"role": "user", "content": RAG_USER_PROMPT.format(data["question"], str(data[KEY])[:5000])}
                     ],
                     "n": 1, "top_p": 1, "temperature": 0
                 }, metadata={'data': data})
@@ -94,36 +96,31 @@ def run_base_inference(guru_data, output_path):
 #                          Part 2：資料格式轉換
 # ==============================================================================
 
-def convert_for_aidaptiv(guru_data):
-    """
-    將 Guru 產物轉為 aiDAPTIV2 訓練格式。
+USER_PROMPT_TEMPLATE = """Question: {question}
+Context: {context}
 
-    TODO: 請決定以下兩個選擇，並在此處修改：
-      1. answer 取法：
-         - 選項 A：取 base_answer 全文（含 CoT 推理過程）
-         - 選項 B：只取 <ANSWER>: 後面的精簡答案
-      2. question 是否帶 context：
-         - 選項 A：question 只放原始問題
-         - 選項 B：question = 問題 + RAG_chunks 上下文
+Answer this question using the information given in the context above. Here is things to pay attention to:
+- If you need to use CoT (Chain of Thought) reasoning, please do so. If the question is simple and does not require CoT, then do not use it.
+- In the reasoning, if you need to copy paste some sentences from the context, include them in ##begin_quote## and ##end_quote##.
+- The response should match the language of the given question.
+- End your response with final answer in the form <ANSWER>: $answer, the answer should be succinct."""
+
+
+def convert_to_sft_format(guru_data):
+    """
+    將 Guru 產物轉為 SFT 訓練格式，與推理時的 prompt 完全一致：
+    - question: 完整 user prompt（含 RAG_chunks context）
+    - answer:   base_answer 全文（含 CoT 推理過程）
     """
     converted = []
     for item in guru_data:
-        answer = item.get("base_answer", "")
-
-        # ---- TODO: 選擇 answer 取法 ----
-        # 選項 B（只取 <ANSWER>: 後面）：
-        # if "<ANSWER>:" in answer:
-        #     answer = answer.split("<ANSWER>:")[-1].strip()
-
-        question = item.get("question", "")
-
-        # ---- TODO: 選擇是否帶 context ----
-        # 選項 B（帶 RAG context）：
-        # context = str(item.get("RAG_chunks", []))
-        # question = f"Context: {context}\n\nQuestion: {question}"
-
+        question = (item.get("question") or "").strip()
+        answer   = (item.get("base_answer") or "").strip()
+        context  = str(item.get("RAG_chunks", []))[:5000]
+        if not question or not answer:
+            continue
         converted.append({
-            "question": question,
+            "question": USER_PROMPT_TEMPLATE.format(question=question, context=context),
             "answer": answer,
         })
     return converted
@@ -159,8 +156,8 @@ if __name__ == "__main__":
     run_base_inference(guru_data, baseline_path)
 
     # Part 2：格式轉換
-    print("\n[資料轉換] 轉換為 aiDAPTIV2 格式...")
-    converted = convert_for_aidaptiv(guru_data)
+    print("\n[資料轉換] 轉換為 SFT 格式...")
+    converted = convert_to_sft_format(guru_data)
     print(f"[資料轉換] 轉換完成: {len(converted)} 筆")
 
     # Part 3：切分
