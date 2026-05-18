@@ -1,78 +1,101 @@
 # Guru QA 資料生成、微調與驗證：從文件到模型的完整實戰
 
-## 課程目標
+## 實驗結果總覽
 
-完成本課程後，你應該能夠：
+| 實驗 | 設定 | `<ANSWER>:` 率 | 平均回應長度 | 關鍵觀察 |
+|------|------|---------------|-------------|---------|
+| Lab2 Base | Base model + RAG_chunks（40 筆） | **53%** | 1,365 字元 | 格式遵循佳，偶有語言混用 |
+| Lab4 SFT v3 | Finetuned + RAG_chunks | **51%** | 1,984 字元 | 自蒸餾瓶頸，15% 輸出退化 |
+| Lab5 B | FT + 極簡 Prompt | 0% | 1,469 字元 | 無格式要求時完全不輸出 ANSWER |
+| Lab5 D | FT + 無 Context | 0% | 286 字元 | Context 是關鍵，缺少則亂答 |
+| Extra A hybrid | FT + hybrid_chunks | 33% | 1,951 字元 | 混合 context 略提升格式率 |
+| Extra A chunk | FT + 原始 chunk | **36%** | 1,286 字元 | 最短最精準，格式率最高 |
+| SFT + Re-ranking | SFT + bge-reranker top-40 | 24% ⚠️ | 1,861 字元 | Reranker 破壞訓練分布，反降 |
+| DPO（無 Rerank）| DPO from Base，40 pairs | 15% ⚠️ | 191 字元 | 訓練樣本不足，模型退化 |
 
-- 使用 **Guru** 工具將 PDF/DOCX 文件轉換為結構化 QA 訓練資料（含 RAG 檢索增強）。
-- 理解 Guru 管線中每個階段（分塊、問題生成、答案生成、RAG 模擬）的產物與品質觀察方式。
-- 使用 **TRL SFTTrainer + DeepSpeed ZeRO-3** 對 `Qwen2.5-3B-Instruct` 進行指令微調（SFT）。
-- 使用批量推理工具對測試集推理，並比較 base model 與 finetuned model 的輸出差異。
-- 使用 **LlamaIndex CorrectnessEvaluator** 搭配 GPT 評審模型，對推理結果進行 1-5 分品質評估。
-- 透過消融實驗（改變 Prompt、Context 等變數），觀察並量化不同因素對最終輸出品質的影響。
+## 核心發現
+
+1. **自蒸餾瓶頸**：用 base model 本身生成的答案訓練 SFT，無法超越 base model，因為訓練目標的品質上限就是 base model 本身。需要 teacher model（GPT-4o / Claude）生成高品質答案才能突破。
+
+2. **Re-ranking 需謹慎**：RAG context 已由 `multilingual-e5-large` 篩選，模型訓練時適應了這個排序。加上 bge-reranker 重排後，分布偏移導致 ANSWER 率從 51% 降至 24%。Re-ranking 需與訓練分布一致才有效。
+
+3. **DPO 數據品質決定一切**：40 筆自蒸餾的 chosen/rejected pairs 不足以建立有意義的偏好對，DPO 反而讓模型退化。需要高品質 teacher 答案作為 chosen。
+
+4. **Context 是關鍵**：無 context 時回應長度從 1,365 字元降至 286 字元，且幾乎全部答錯。RAG context 對這類領域 QA 任務不可缺少。
 
 ## 模型規格
 
-本課程統一使用以下模型：
+| 用途 | 模型 |
+|------|------|
+| Guru 生題生答 / Inference 推理 | `Qwen/Qwen2.5-3B-Instruct`（vLLM） |
+| SFT 微調 | `Qwen/Qwen2.5-3B-Instruct`（DeepSpeed ZeRO-3 + LoRA） |
+| RAG 向量檢索 embedding | `intfloat/multilingual-e5-large` |
+| Re-ranking | `BAAI/bge-reranker-base` |
 
-| 用途 | 模型 | 說明 |
-|------|------|------|
-| Guru 生題生答 / Inference 推理 | `Qwen/Qwen2.5-3B-Instruct` | 透過 vLLM 以 OpenAI 相容 API 提供 |
-| SFT 微調 base model | `Qwen/Qwen2.5-3B-Instruct` | 主機路徑 `/home/jimmy/models/Qwen2.5-3B-Instruct` |
-| RAG 向量檢索 embedding | `intfloat/multilingual-e5-large` | sentence-transformers |
-| Benchmark 評審 | `gpt-5.1` | 打外部 GPT API（助教提供帳號） |
+## SFT 訓練超參數（v3）
 
-## 環境與依賴（uv）
+| 參數 | 值 |
+|------|-----|
+| LoRA rank | 16，alpha 32 |
+| Target modules | q/k/v/o/gate/up/down_proj |
+| Learning rate | 5e-5 |
+| Batch size | 1 × grad_accum=4 |
+| Max seq length | 4096 tokens |
+| Epochs | 10（200 steps） |
+| DeepSpeed | ZeRO-3 + NVMe offload |
+| GPU | RTX 3060 12GB × 1 |
+| Train loss | 2.18 → 0.36 |
+| Token accuracy | 61% → 92% |
 
-本專案以 **[uv](https://github.com/astral-sh/uv)** 管理 Python 版本與套件。依賴宣告在專案根目錄的 `pyproject.toml`。
-
-1. **安裝 uv**：見官方文件 [Installing uv](https://docs.astral.sh/uv/getting-started/installation/)。
-2. **在專案根目錄同步依賴**（會建立 `.venv` 並安裝所有套件）：
-   ```bash
-   uv sync
-   ```
-3. **執行各 Lab 腳本**：在專案根目錄使用 `uv run`（會自動使用虛擬環境，無須先 `activate`）。各 Lab 的具體指令見各資料夾內 `README.md`。
-
-### 其他環境需求
-
-- **poppler**（PDF 解析需要）：`sudo apt-get install poppler-utils`
-- **Docker**：Docker Desktop 或等效（vLLM 與 SFT 訓練容器均需要）。
-- **vLLM 服務**：用 Docker 啟動 vLLM，本課程沿用相同方式（見 Lab0）。
-- **GPT 評審 API**（LlamaIndex Benchmark 需要）：助教會提供帳號與端點。
-
-## vLLM 啟動方式
-
-與前面課程相同，在專案根目錄執行：
+## 環境設定
 
 ```bash
-docker compose -f docker-compose-vllm.yaml up -d
-```
+# Python 依賴（uv）
+uv sync
 
-啟動後 vLLM 端點為 `http://localhost:8299/v1`，served model name 為 `Qwen2.5-3B-Instruct`。
+# 系統依賴
+sudo apt-get install poppler-utils
+
+# vLLM 啟動
+docker compose -f docker-compose-vllm.yaml up -d
+# 端點：http://localhost:8299/v1
+
+# SFT 訓練
+docker compose -f lab3_finetune/docker-compose-sft.yaml build
+docker compose -f lab3_finetune/docker-compose-sft.yaml run --rm sft_finetune \
+  deepspeed --num_gpus=1 /workspace/lab3_finetune/train_sft.py
+
+# LoRA merge
+docker compose -f lab3_finetune/docker-compose-sft.yaml run --rm sft_finetune \
+  python3 /workspace/lab3_finetune/merge_lora.py
+```
 
 ## 實作 Lab 概觀
 
-| Lab | 主題 | 目標 | GPU 需求 |
-| --- | ---- | ---- | -------- |
-| Lab0 | 環境檢查 | 確認 vLLM、Docker、embedding model、uv 可用 | vLLM |
-| Lab1 | Guru 全管線 + 觀察 | 跑完 Guru 全流程，人工觀察每階段產物品質 | vLLM |
-| Lab2 | Base 推理 + 資料轉換 | 用 base model 推理並存檔；將 Guru 產物轉為 SFT 訓練格式 | vLLM |
-| Lab3 | Finetune（TRL SFTTrainer） | 使用自建 Docker + DeepSpeed ZeRO-3 + LoRA 對模型進行指令微調 | SFT Container |
-| Lab4 | 推理 + Benchmark + 比較 | Base / Finetuned 推理 + benchmark，完整比較 | vLLM |
-| Lab5 | Prompt / Context 消融 | 改推理 prompt、移除 context，觀察肉眼可見的差異並量化 | vLLM |
-| Extra A | 錯誤分析 + 欄位消融 | 分類失敗案例；比較 RAG_chunks / hybrid_chunks / chunk | vLLM 或無 |
-| Extra B | Guru 參數消融 + 二次 Finetune | 改 chunk_size 或 prompt 重跑 Guru → 訓練 → 推理 → 比較 | vLLM + SFT |
-
-**Extra Lab** 為選做，不列入本課程成績；提供給進度較快、想延伸研究與挑戰的同學，詳見各 `extra_*/README.md`。
+| Lab | 主題 | 結果 |
+|-----|------|------|
+| Lab1 | Guru 全管線（PDF → Chunk → Q → A → RAG）| 100 筆 QA，avg rag_acc ≈ 0 |
+| Lab2 | Base model 推理 + train/test 切分 | 53% ANSWER rate，訓練 80 筆 |
+| Lab3 | SFT（ZeRO-3 + LoRA） + Merge + vLLM 部署 | loss 0.36，acc 92%，200 steps |
+| Lab4 | Base vs Finetuned 比較 | FT 51% < Base 53%（自蒸餾瓶頸）|
+| Lab5 | Prompt × Context 消融（4 組） | Context 移除後從 53% → 0% |
+| Extra A | Context 欄位消融（RAG/hybrid/chunk）| chunk 欄位 36% 最佳 |
+| Extra B | Chunk size 消融（256 vs 1024）| 小 chunk 問題更聚焦，答案更簡潔 |
+| lab_dpo | DPO 訓練管線 + Re-ranking 實驗 | 兩者皆因數據品質不足而退化 |
 
 ## 完整工作流程
 
 ```
-1. guru (Lab1)          2. inference (Lab2/4)   3. benchmark (Lab4)
-┌──────────────────┐    ┌──────────────────┐    ┌──────────────────────┐
-│ PDF/DOCX 文件    │ →  │ QA 資料          │ →  │ 推理結果             │ → 品質評估報告
-│                  │    │ (含 RAG context) │    │ (predicted_answer)   │
-└──────────────────┘    └──────────────────┘    └──────────────────────┘
-        ↓                       ↓
-   convert (Lab2)        TRL SFTTrainer 微調 (Lab3)
+PDF/DOCX → Guru(Lab1) → train.json(Lab2) → SFT(Lab3) → Merge → vLLM
+                                                                    ↓
+                                          Base 推理(Lab2) ←→ FT 推理(Lab4)
+                                                                    ↓
+                                              消融實驗 (Lab5, Extra A/B)
 ```
+
+## 改進方向
+
+若要突破 53% 上限：
+1. 使用 **GPT-4o / Claude** 作為 teacher model 生成高品質答案（見 `generate_claude_answers.py`）
+2. 以高品質答案重新 SFT，再做 DPO
+3. Re-ranking 需先確保訓練 context 格式與推理 context 格式一致
