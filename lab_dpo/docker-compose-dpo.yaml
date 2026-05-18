@@ -1,0 +1,46 @@
+services:
+  dpo_finetune:
+    build:
+      context: ../lab3_finetune
+      dockerfile: Dockerfile
+    image: sft_finetune:latest
+    container_name: dpo_finetune
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0"
+      BASE_MODEL:  /mnt/model/Qwen2.5-3B-Instruct
+      TRAIN_DATA:  /workspace/lab_dpo/output/dpo_train.json
+      OUTPUT_DIR:  /workspace/lab_dpo/output/dpo
+      DS_CONFIG:   /workspace/lab_dpo/ds_zero3_dpo.json
+
+    volumes:
+      - ../:/workspace
+      - ~/models:/mnt/model
+      - /tmp/ds_offload:/ds_offload
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      stack:
+        soft: 67108864
+        hard: 67108864
+    ipc: host
+    pid: "host"
+
+    # Build (reuse SFT image):
+    #   docker compose -f lab_dpo/docker-compose-dpo.yaml build
+    # Generate pairs first:
+    #   python3 lab_dpo/generate_dpo_pairs.py
+    # Then train:
+    #   docker compose -f lab_dpo/docker-compose-dpo.yaml run --rm dpo_finetune \
+    #     deepspeed --num_gpus=1 /workspace/lab_dpo/train_dpo.py
+    command: tail -f /dev/null

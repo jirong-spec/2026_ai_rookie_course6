@@ -300,12 +300,28 @@ def stage_answer(question_output_path, answer_output_path):
 #                          階段五：RAG 檢索增強
 # ==============================================================================
 
-def stage_rag(output_folder, answer_output_path, rag_output_path, retrieve_top_k=40):
-    print(f"\n[階段 5/5] RAG 檢索增強 (top_k={retrieve_top_k})...")
+def _rerank(question: str, chunks: list, top_k: int = 10,
+            model_name: str = "BAAI/bge-reranker-base") -> list:
+    """CrossEncoder re-ranking: score (question, chunk) pairs and return top_k."""
+    try:
+        from sentence_transformers import CrossEncoder
+        reranker = CrossEncoder(model_name)
+        pairs = [(question, c) for c in chunks]
+        scores = reranker.predict(pairs)
+        ranked = sorted(zip(scores, chunks), key=lambda x: x[0], reverse=True)
+        return [c for _, c in ranked[:top_k]]
+    except Exception as e:
+        print(f"[rerank] 失敗，跳過: {e}")
+        return chunks[:top_k]
+
+
+def stage_rag(output_folder, answer_output_path, rag_output_path, retrieve_top_k=40,
+              rerank_top_k=10, enable_rerank=True):
+    print(f"\n[階段 5/5] RAG 檢索增強 (top_k={retrieve_top_k}, rerank={enable_rerank})...")
     import torch
     torch.cuda.empty_cache()
 
-    rag = RAGChunking(device="cpu", chunk_size=256, chunk_overlap=32)
+    rag = RAGChunking(device="cpu", chunk_size=CHUNK_SIZE, chunk_overlap=32)
     rag.init(txtfileFolder=output_folder)
 
     new_list = []
@@ -334,6 +350,9 @@ def stage_rag(output_folder, answer_output_path, rag_output_path, retrieve_top_k
                 context = chunk[0].page_content
                 file_name = chunk[0].metadata['source'].split('/')[-1]
                 chunk_list.append("file name:" + file_name + "\ncontent: " + context)
+
+            if enable_rerank and chunk_list:
+                chunk_list = _rerank(question, chunk_list, top_k=rerank_top_k)
 
             golden_chunk = data["chunk"]
             rag_chunk = list(chunk_list)

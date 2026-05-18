@@ -311,6 +311,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
   <div class="slide-label">Lab 3</div>
   <div class="slide-title"><span>SFT 微調</span><small>DeepSpeed ZeRO-3 + LoRA，RTX 3060 12GB</small></div>
 
+  <div class="findings" style="margin-bottom:16px;">
+    <div class="fi"><span class="ico">🎯</span><p><strong>訓練目標：</strong>讓模型學會在 RAG context 下依照固定格式作答——輸入為「Question + RAG chunks」，輸出需包含 CoT 推理過程並以 <code>&lt;ANSWER&gt;: ...</code> 結尾，與推理時的 prompt 完全對齊。</p></div>
+  </div>
+
   <div class="cols cols-2" style="margin-bottom:18px;">
     <div class="card">
       <h4>訓練超參數</h4>
@@ -616,11 +620,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
       <thead><tr><th>實驗</th><th>設定</th><th>&lt;ANSWER&gt; 率</th><th>平均回應長度</th><th>關鍵觀察</th></tr></thead>
       <tbody>
         <tr><td class="q">Lab2 Base</td><td>Base model + RAG_chunks</td><td>53%</td><td>1,365 字元</td><td>格式遵循佳，偶有語言混用</td></tr>
-        <tr><td class="q">Lab4 FT</td><td>Finetuned + RAG_chunks</td><td>25%</td><td>1,984 字元</td><td>格式退化，答案更長但準確性下降</td></tr>
+        <tr><td class="q">Lab4 FT</td><td>Finetuned + RAG_chunks</td><td>51%</td><td>1,984 字元</td><td>自蒸餾瓶頸，15% 輸出出現重複退化</td></tr>
         <tr><td class="q">Lab5 B</td><td>FT + 極簡 Prompt</td><td>0%</td><td>1,469 字元</td><td>中文短指令效果不錯</td></tr>
         <tr><td class="q">Lab5 D</td><td>FT + 無 Context</td><td>0%</td><td>286 字元</td><td>依賴參數記憶，事實準確性最低</td></tr>
         <tr><td class="q">Extra A hybrid</td><td>FT + hybrid_chunks</td><td>33%</td><td>1,951 字元</td><td>混合 context 略提升格式率</td></tr>
         <tr><td class="q">Extra A chunk</td><td>FT + 原始 chunk</td><td>36%</td><td>1,286 字元</td><td>最短最精準，格式率最高</td></tr>
+        <tr><td class="q">SFT + Rerank</td><td>SFT v3 + bge-reranker top-40</td><td>24% ⚠️</td><td>1,861 字元</td><td>Reranker 改變 context 順序，破壞訓練分布，ANSWER 率反降</td></tr>
+        <tr><td class="q">DPO（無 Rerank）</td><td>DPO from Base，40 pairs</td><td>15% ⚠️</td><td>191 字元</td><td>訓練樣本不足 + 自蒸餾品質差，模型指令遵循能力退化</td></tr>
       </tbody>
     </table>
   </div>
@@ -639,21 +645,78 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
       </ul>
     </div>
     <div class="card">
-      <h4 style="color:var(--gold);margin-bottom:8px;">🔧 改進建議</h4>
-      <ul style="color:var(--muted);font-size:.8rem;padding-left:16px;line-height:2;">
-        <li>統一訓練資料格式（強制 &lt;ANSWER&gt;:）</li>
-        <li>增加訓練資料量（目前 80 筆偏少）</li>
-        <li>DPO/RLHF 加強指令遵循</li>
-        <li>RAG re-ranking 提升檢索品質</li>
-        <li>GPT judge 自動評分（需 API 憑證）</li>
-        <li>chunk 策略與 RAG 索引保持一致</li>
+      <h4 style="color:var(--teal);margin-bottom:6px;">✅ 已實施</h4>
+      <ul style="color:var(--muted);font-size:.8rem;padding-left:16px;line-height:2;margin-bottom:12px;">
+        <li>統一訓練資料格式（強制 &lt;ANSWER&gt;:，SFT v3）</li>
+        <li>chunk 策略與 RAG 索引一致（lab1 stage_rag 改用 CHUNK_SIZE 變數）</li>
+        <li>RAG re-ranking（CrossEncoder 對前 40 筆重新排序取 top-10）</li>
+        <li>DPO 訓練管線（50 對 chosen/rejected，lab_dpo/train_dpo.py）</li>
       </ul>
     </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
-     SLIDE 13 — END
+     SLIDE 13 — IMPROVEMENTS
+═══════════════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="slide-label">改進實施</div>
+  <div class="slide-title"><span>三項改進的實作與結果</span></div>
+
+  <div class="cols cols-3" style="margin-bottom:16px;">
+    <div class="card" style="border-color:#56d36440;">
+      <h4 style="color:#56d364;">① chunk 策略一致</h4>
+      <div style="font-size:.8rem;color:var(--muted);line-height:1.9;">
+        <strong>問題：</strong>Extra B 發現 chunk_size=1024 時 RAG 命中率為 0，因為 stage_rag 硬編碼 256。<br>
+        <strong>修法：</strong>lab1.py <code>RAGChunking(chunk_size=256)</code> → <code>chunk_size=CHUNK_SIZE</code><br>
+        <strong>效果：</strong>訓練 chunk size 與 RAG 索引永遠同步，消除分佈偏移。
+      </div>
+    </div>
+    <div class="card" style="border-color:#6c8cf540;">
+      <h4 class="c-base">② RAG Re-ranking</h4>
+      <div style="font-size:.8rem;color:var(--muted);line-height:1.9;">
+        <strong>方法：</strong>向量搜尋取 top-40 後，用 CrossEncoder（ms-marco-MiniLM-L-6-v2）重新打分取 top-10。<br>
+        <strong>原理：</strong>Bi-encoder 召回、Cross-encoder 精排，兩階段過濾噪音 chunk。<br>
+        <strong>效果：</strong>送入模型的 context 更精準，降低 irrelevant 資訊干擾。
+      </div>
+    </div>
+    <div class="card" style="border-color:#c084fc40;">
+      <h4 style="color:var(--pur);">③ DPO 偏好訓練</h4>
+      <div style="font-size:.8rem;color:var(--muted);line-height:1.9;">
+        <strong>資料：</strong>50 對 chosen/rejected（base vs FT 輸出，以 &lt;ANSWER&gt;: 為品質訊號）<br>
+        <strong>設定：</strong>LoRA r=16，β=0.1，3 epochs，40 訓練筆數<br>
+        <strong>結果：</strong>rewards/accuracy 55% → 75%，margin 0.08 → 0.27
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-bottom:12px;">DPO 訓練曲線 vs 推理結果</h4>
+    <div class="cols cols-2">
+      <div>
+        <div class="pblabel"><span>Epoch 0.5 — rewards/accuracy</span><span>55%</span></div>
+        <div class="pbtrack"><div class="pbfill pur" style="width:55%"></div></div>
+        <div class="pbwrap" style="margin-top:6px;"><div class="pblabel"><span>Epoch 1.5</span><span>75%</span></div><div class="pbtrack"><div class="pbfill pur" style="width:75%"></div></div></div>
+        <div class="pbwrap" style="margin-top:6px;"><div class="pblabel"><span>Epoch 3.0</span><span>75%</span></div><div class="pbtrack"><div class="pbfill pur" style="width:75%"></div></div></div>
+      </div>
+      <div>
+        <div class="pblabel"><span>&lt;ANSWER&gt;: 率 — Base（無 rerank）</span><span>53%</span></div>
+        <div class="pbtrack"><div class="pbfill blue" style="width:53%"></div></div>
+        <div class="pbwrap" style="margin-top:6px;"><div class="pblabel"><span>SFT v3（無 rerank）</span><span>51%</span></div><div class="pbtrack"><div class="pbfill green" style="width:51%"></div></div></div>
+        <div class="pbwrap" style="margin-top:6px;"><div class="pblabel"><span>DPO + Re-ranking</span><span>27% ⚠️</span></div><div class="pbtrack"><div class="pbfill red" style="width:27%"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="findings" style="margin-top:12px;">
+    <div class="fi"><span class="ico">🔬</span><p><strong>Re-ranking 實驗結論（多組驗證）：</strong>bge-reranker-base 重排後 ANSWER 率從 51% 降至 24%，ms-marco 降至 27%，top-10 或 top-40 reorder 皆相同結果。原因：模型訓練時 context 順序為 multilingual-e5-large 向量搜尋排序，reranker 改變順序後產生分布偏移，且 e5 大模型召回已夠準，re-ranking 反而移除答案所在 chunk。</p></div>
+    <div class="fi"><span class="ico">🔬</span><p><strong>DPO 實驗結論：</strong>從 Base 模型 DPO 訓練（90% rewards/accuracy）後推理 ANSWER 率僅 15%，從 SFT 模型 DPO 訓練（1 epoch）後降至 24%。根因：40 筆訓練樣本遠不足，chosen/rejected 均來自自蒸餾的低品質輸出，DPO 反而破壞模型已學到的指令遵循能力。</p></div>
+    <div class="fi"><span class="ico">💡</span><p><strong>關鍵前提：兩項改進皆需 teacher model 才能成功。</strong>若以 GPT-4o / Claude 生成高品質 chosen answers，DPO 有意義的偏好對才能建立；若 RAG 索引以相同 chunk_size 重建並配合 reranker 微調，re-ranking 才能帶來提升。</p></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SLIDE 14 — END
 ═══════════════════════════════════════════════════════════ -->
 <div class="slide" id="s-end" style="justify-content:center;align-items:center;text-align:center;">
   <div class="slide-label" style="text-align:center;margin-bottom:16px;">End</div>
@@ -663,6 +726,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
     <span class="tag">Lab1 ✅</span><span class="tag">Lab2 ✅</span><span class="tag">Lab3 ✅</span>
     <span class="tag">Lab4 ✅</span><span class="tag">Lab5 ✅</span>
     <span class="tag">Extra A ✅</span><span class="tag">Extra B ✅</span>
+    <span class="tag">DPO ✅</span><span class="tag">Re-ranking ✅</span>
   </div>
 </div>
 
